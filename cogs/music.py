@@ -13,6 +13,7 @@ FFMPEG_OPTIONS = "-vn"
 EMBED_COLOR = 0x1DB954
 
 NODE_PATH = shutil.which("node")
+print(f"[Music] Node.js detected at: {NODE_PATH}")
 
 COOKIES_FILE = "cookies.txt"
 _cookies_env = os.getenv("YT_COOKIES")
@@ -65,16 +66,14 @@ class Music(commands.Cog):
         return self._states[guild_id]
 
     async def _fetch_yt(self, query):
-        extractor_youtube = {"player_client": ["web", "android"]}
-        if NODE_PATH:
-            extractor_youtube["js_runtimes"] = [f"node:{NODE_PATH}"]
-
         ydl_opts = {
             "format": "bestaudio*/bestaudio/best",
             "noplaylist": True,
             "quiet": True,
-            "extractor_args": {"youtube": extractor_youtube},
+            "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         }
+        if NODE_PATH:
+            ydl_opts["js_runtimes"] = [f"node:{NODE_PATH}"]
         if os.path.exists(COOKIES_FILE):
             ydl_opts["cookiefile"] = COOKIES_FILE
         if not query.startswith("http"):
