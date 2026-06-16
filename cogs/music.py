@@ -69,6 +69,7 @@ class Music(commands.Cog):
             "format": "bestaudio*/bestaudio/best",
             "noplaylist": True,
             "quiet": True,
+            "remote_components": ["ejs:github"],
         }
         if os.path.exists(COOKIES_FILE):
             ydl_opts["cookiefile"] = COOKIES_FILE
