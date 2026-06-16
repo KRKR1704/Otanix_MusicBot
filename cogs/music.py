@@ -12,8 +12,7 @@ FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max
 FFMPEG_OPTIONS = "-vn"
 EMBED_COLOR = 0x1DB954
 
-NODE_PATH = shutil.which("node")
-print(f"[Music] Node.js detected at: {NODE_PATH}")
+print(f"[Music] deno detected at: {shutil.which('deno')}")
 
 COOKIES_FILE = "cookies.txt"
 _cookies_env = os.getenv("YT_COOKIES")
@@ -70,10 +69,7 @@ class Music(commands.Cog):
             "format": "bestaudio*/bestaudio/best",
             "noplaylist": True,
             "quiet": True,
-            "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         }
-        if NODE_PATH:
-            ydl_opts["js_runtimes"] = {"node": {"path": NODE_PATH}}
         if os.path.exists(COOKIES_FILE):
             ydl_opts["cookiefile"] = COOKIES_FILE
         if not query.startswith("http"):
