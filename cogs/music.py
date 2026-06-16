@@ -73,7 +73,7 @@ class Music(commands.Cog):
             "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         }
         if NODE_PATH:
-            ydl_opts["js_runtimes"] = [f"node:{NODE_PATH}"]
+            ydl_opts["js_runtimes"] = {"node": {"path": NODE_PATH}}
         if os.path.exists(COOKIES_FILE):
             ydl_opts["cookiefile"] = COOKIES_FILE
         if not query.startswith("http"):
