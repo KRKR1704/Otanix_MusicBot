@@ -22,12 +22,13 @@ if _cookies_env and not os.path.exists(COOKIES_FILE):
 
 
 class Track:
-    def __init__(self, title, url, duration, requester, thumbnail=None):
+    def __init__(self, title, url, duration, requester, thumbnail=None, headers=None):
         self.title = title
         self.url = url
         self.duration = duration
         self.requester = requester
         self.thumbnail = thumbnail
+        self.headers = headers or {}
 
     @property
     def duration_str(self):
@@ -66,7 +67,9 @@ class Music(commands.Cog):
 
     async def _fetch_yt(self, query):
         ydl_opts = {
-            "format": "bestaudio*/bestaudio/best",
+            # Prefer direct progressive/DASH audio streams over fragile HLS (m3u8) streams,
+            # which require segment-by-segment requests that frequently 403 from cloud IPs.
+            "format": "bestaudio[protocol!=m3u8][protocol!=m3u8_native]/bestaudio*/bestaudio/best",
             "noplaylist": True,
             "quiet": True,
             "remote_components": ["ejs:github"],
@@ -83,13 +86,18 @@ class Music(commands.Cog):
                 info = ydl.extract_info(query, download=False)
                 if "entries" in info:
                     info = info["entries"][0]
-                url = info.get("url") or next(
-                    (f["url"] for f in info.get("formats", [])
-                     if f.get("acodec") != "none" and f.get("url")), None
-                )
-                if not url:
+                fmt = None
+                if info.get("url"):
+                    fmt = info
+                else:
+                    fmt = next(
+                        (f for f in info.get("formats", [])
+                         if f.get("acodec") != "none" and f.get("url")), None
+                    )
+                if not fmt:
                     raise ValueError("yt-dlp returned no streamable URL")
-                info["url"] = url
+                info["url"] = fmt["url"]
+                info["resolved_headers"] = fmt.get("http_headers", {})
                 return info
 
         return await loop.run_in_executor(None, _extract)
@@ -102,6 +110,7 @@ class Music(commands.Cog):
             duration=info.get("duration", 0),
             requester=requester,
             thumbnail=info.get("thumbnail"),
+            headers=info.get("resolved_headers"),
         )
 
     def _after_play(self, guild_id, error):
@@ -125,10 +134,15 @@ class Music(commands.Cog):
             return
 
         try:
+            before_options = FFMPEG_BEFORE_OPTIONS
+            if track.headers:
+                header_lines = "".join(f"{k}: {v}\r\n" for k, v in track.headers.items())
+                before_options = f'-headers "{header_lines}" {before_options}'
+
             source = discord.PCMVolumeTransformer(
                 discord.FFmpegPCMAudio(
                     track.url,
-                    before_options=FFMPEG_BEFORE_OPTIONS,
+                    before_options=before_options,
                     options=FFMPEG_OPTIONS,
                     executable="ffmpeg",
                 ),
