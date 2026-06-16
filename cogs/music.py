@@ -65,13 +65,16 @@ class Music(commands.Cog):
         return self._states[guild_id]
 
     async def _fetch_yt(self, query):
+        extractor_youtube = {"player_client": ["web", "android"]}
+        if NODE_PATH:
+            extractor_youtube["js_runtimes"] = [f"node:{NODE_PATH}"]
+
         ydl_opts = {
-            "format": "bestaudio/best",
+            "format": "bestaudio*/bestaudio/best",
             "noplaylist": True,
             "quiet": True,
+            "extractor_args": {"youtube": extractor_youtube},
         }
-        if NODE_PATH:
-            ydl_opts["extractor_args"] = {"youtube": {"js_runtimes": [f"node:{NODE_PATH}"]}}
         if os.path.exists(COOKIES_FILE):
             ydl_opts["cookiefile"] = COOKIES_FILE
         if not query.startswith("http"):
