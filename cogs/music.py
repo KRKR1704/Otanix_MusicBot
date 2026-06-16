@@ -1,6 +1,8 @@
 import asyncio
 import collections
+import os
 import random
+import shutil
 
 import discord
 import yt_dlp
@@ -9,6 +11,14 @@ from discord.ext import commands
 FFMPEG_BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 FFMPEG_OPTIONS = "-vn"
 EMBED_COLOR = 0x1DB954
+
+NODE_PATH = shutil.which("node")
+
+COOKIES_FILE = "cookies.txt"
+_cookies_env = os.getenv("YT_COOKIES")
+if _cookies_env and not os.path.exists(COOKIES_FILE):
+    with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+        f.write(_cookies_env)
 
 
 class Track:
@@ -60,6 +70,10 @@ class Music(commands.Cog):
             "noplaylist": True,
             "quiet": True,
         }
+        if NODE_PATH:
+            ydl_opts["extractor_args"] = {"youtube": {"js_runtimes": [f"node:{NODE_PATH}"]}}
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts["cookiefile"] = COOKIES_FILE
         if not query.startswith("http"):
             query = f"ytsearch1:{query}"
 

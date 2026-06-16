@@ -1,5 +1,6 @@
 # Environment
 .env
+cookies.txt
 
 # Virtual environment
 .venv/
