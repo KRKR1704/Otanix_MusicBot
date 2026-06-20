@@ -3,6 +3,7 @@ import collections
 import os
 import random
 import shutil
+import urllib.parse
 
 import discord
 import yt_dlp
@@ -21,10 +22,21 @@ if _cookies_env and not os.path.exists(COOKIES_FILE):
         f.write(_cookies_env)
 
 
+def _is_playlist_url(query):
+    if not query.startswith("http"):
+        return False
+    try:
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(query).query)
+        return "list" in params
+    except Exception:
+        return False
+
+
 class Track:
-    def __init__(self, title, url, duration, requester, thumbnail=None, headers=None):
+    def __init__(self, title, url, duration, requester, thumbnail=None, headers=None, source_url=None):
         self.title = title
-        self.url = url
+        self.url = url          # resolved CDN stream URL; None if lazy
+        self.source_url = source_url  # YouTube watch URL, for lazy resolution
         self.duration = duration
         self.requester = requester
         self.thumbnail = thumbnail
@@ -113,6 +125,26 @@ class Music(commands.Cog):
             headers=info.get("resolved_headers"),
         )
 
+    async def _fetch_playlist(self, url):
+        ydl_opts = {
+            "extract_flat": "in_playlist",
+            "quiet": True,
+        }
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts["cookiefile"] = COOKIES_FILE
+
+        loop = asyncio.get_event_loop()
+
+        def _extract():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if "entries" not in info:
+                    return None, []
+                entries = [e for e in info["entries"] if e and e.get("id")]
+                return info.get("title", "Playlist"), entries
+
+        return await loop.run_in_executor(None, _extract)
+
     def _after_play(self, guild_id, error):
         if error:
             print(f"[Music] Playback error: {error}")
@@ -132,6 +164,19 @@ class Music(commands.Cog):
         if vc is None:
             state.current = None
             return
+
+        # Resolve lazy playlist track — stream URL fetched just before playback
+        if track.url is None and track.source_url:
+            try:
+                info = await self._fetch_yt(track.source_url)
+                track.url = info["url"]
+                track.headers = info.get("resolved_headers", {})
+                if not track.duration:
+                    track.duration = info.get("duration", 0)
+            except Exception as e:
+                print(f"[Music] Skipping '{track.title}' — could not resolve: {e}")
+                await self._advance(guild_id, state)
+                return
 
         try:
             before_options = FFMPEG_BEFORE_OPTIONS
@@ -199,8 +244,33 @@ class Music(commands.Cog):
 
         state = self._get_state(ctx.guild.id)
 
-        # Join voice FIRST, then fetch — avoids Discord timing out the connection
         if not await self._ensure_voice(ctx, state):
+            return
+
+        if _is_playlist_url(query):
+            async with ctx.typing():
+                playlist_title, entries = await self._fetch_playlist(query)
+
+            if not entries:
+                return await ctx.send("Could not load the playlist or it is empty.")
+
+            for entry in entries:
+                src = entry.get("url") or f"https://www.youtube.com/watch?v={entry['id']}"
+                if not src.startswith("http"):
+                    src = f"https://www.youtube.com/watch?v={src}"
+                track = Track(
+                    title=entry.get("title", "Unknown"),
+                    url=None,
+                    duration=entry.get("duration", 0),
+                    requester=ctx.author,
+                    thumbnail=entry.get("thumbnail"),
+                    source_url=src,
+                )
+                state.queue.append(track)
+
+            await ctx.send(f"Added **{len(entries)}** tracks from **{playlist_title}** to the queue.")
+            if not state.is_playing() and not state.is_paused():
+                await self._advance(ctx.guild.id, state)
             return
 
         try:
