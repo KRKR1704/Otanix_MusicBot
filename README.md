@@ -1,6 +1,6 @@
 # Otanix — Discord Music Bot
 
-A self-hosted Discord music bot that searches and streams audio from YouTube directly into voice channels. Uses `discord.py`, `yt-dlp`, and `FFmpeg`.
+**v1.1** — A self-hosted Discord music bot that searches and streams audio from YouTube directly into voice channels. Supports single tracks, YouTube search, and full playlists. Uses `discord.py`, `yt-dlp`, and `FFmpeg`.
 
 ---
 
@@ -96,7 +96,7 @@ Share this URL with friends so they can add Otanix to their own servers too.
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `!play <query>` | `!p` | Play a song by name or YouTube URL |
+| `!play <query>` | `!p` | Play a song by name, YouTube URL, or YouTube playlist URL |
 | `!pause` | | Pause the current track |
 | `!resume` | `!r` | Resume the paused track |
 | `!skip` | `!next`, `!s` | Skip to the next track |
@@ -121,6 +121,18 @@ If the bot joins but doesn't play, make sure it has these permissions in the voi
 - **Speak**
 
 Set these in: Channel Settings → Permissions → add the bot's role.
+
+---
+
+## Changelog
+
+### v1.1
+- YouTube playlist support — paste a playlist URL and all tracks are queued instantly
+- Each track's stream URL is resolved on-demand just before it plays (no upfront delay)
+- Unavailable or deleted playlist tracks are skipped automatically
+
+### v1.0
+- Initial release — YouTube search and single-track playback, queue, loop, volume, shuffle
 
 ---
 
