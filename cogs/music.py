@@ -3,6 +3,7 @@ import collections
 import os
 import random
 import shutil
+import subprocess
 import urllib.parse
 
 import discord
@@ -59,6 +60,16 @@ class GuildMusicState:
         self.current = None
         self.voice_client = None
         self.loop = False
+        self._ytdlp_proc = None
+
+    def kill_ytdlp(self):
+        if self._ytdlp_proc:
+            try:
+                self._ytdlp_proc.kill()
+                self._ytdlp_proc.wait(timeout=2)
+            except Exception:
+                pass
+            self._ytdlp_proc = None
 
     def is_playing(self):
         return self.voice_client is not None and self.voice_client.is_playing()
@@ -127,7 +138,22 @@ class Music(commands.Cog):
             requester=requester,
             thumbnail=info.get("thumbnail"),
             headers=info.get("resolved_headers"),
+            source_url=info.get("webpage_url") or info.get("original_url", ""),
         )
+
+    def _start_ytdlp_pipe(self, url):
+        """Start a yt-dlp subprocess that downloads audio to stdout for FFmpeg to pipe from."""
+        cmd = [
+            "yt-dlp",
+            "--format", "bestaudio[protocol!=m3u8][protocol!=m3u8_native]/bestaudio",
+            "--no-playlist",
+            "--quiet",
+            "--output", "-",
+        ]
+        if os.path.exists(COOKIES_FILE):
+            cmd += ["--cookies", COOKIES_FILE]
+        cmd.append(url)
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     async def _fetch_playlist(self, url):
         ydl_opts = {
@@ -158,71 +184,52 @@ class Music(commands.Cog):
         coro = self._advance(guild_id, state)
         asyncio.run_coroutine_threadsafe(coro, self.bot.loop)
 
-    async def _prefetch_next(self, state):
-        """Resolve the next lazy track's stream URL in the background while current track plays."""
-        if not state.queue:
-            return
-        next_track = state.queue[0]
-        if next_track.url is not None or not next_track.source_url:
-            return
-        try:
-            info = await self._fetch_yt(next_track.source_url)
-            next_track.url = info["url"]
-            next_track.headers = info.get("resolved_headers", {})
-            if not next_track.duration:
-                next_track.duration = info.get("duration", 0)
-            print(f"[Music] Prefetched: {next_track.title}")
-        except Exception as e:
-            print(f"[Music] Prefetch failed for '{next_track.title}': {e}")
-
     async def _advance(self, guild_id, state):
         if not state.queue:
             state.current = None
+            state.kill_ytdlp()
             return
         track = state.queue.popleft()
         state.current = track
         vc = state.voice_client
         if vc is None:
             state.current = None
+            state.kill_ytdlp()
             return
 
-        # Resolve lazy playlist track — may already be done by prefetch
-        if track.url is None and track.source_url:
-            try:
-                info = await self._fetch_yt(track.source_url)
-                track.url = info["url"]
-                track.headers = info.get("resolved_headers", {})
-                if not track.duration:
-                    track.duration = info.get("duration", 0)
-            except Exception as e:
-                print(f"[Music] Skipping '{track.title}' — could not resolve: {e}")
-                await self._advance(guild_id, state)
-                return
+        # Kill previous yt-dlp download process before starting the next one
+        state.kill_ytdlp()
+
+        play_url = track.source_url
+        if not play_url:
+            print(f"[Music] No source URL for '{track.title}', skipping")
+            await self._advance(guild_id, state)
+            return
 
         try:
-            before_options = FFMPEG_BEFORE_OPTIONS
-            if track.headers:
-                header_lines = "".join(f"{k}: {v}\r\n" for k, v in track.headers.items())
-                before_options = f'-headers "{header_lines}" {before_options}'
+            # Pipe approach: yt-dlp downloads audio internally (handling all auth/cookies),
+            # pipes raw audio bytes to FFmpeg — FFmpeg never makes a direct CDN request,
+            # so IP-signed URLs and cookie requirements are not a problem.
+            ytdlp_proc = self._start_ytdlp_pipe(play_url)
+            state._ytdlp_proc = ytdlp_proc
 
             source = discord.PCMVolumeTransformer(
                 discord.FFmpegPCMAudio(
-                    track.url,
-                    before_options=before_options,
+                    ytdlp_proc.stdout,
+                    pipe=True,
                     options=FFMPEG_OPTIONS,
                     executable="ffmpeg",
                 ),
                 volume=0.5,
             )
             vc.play(source, after=lambda e: self._after_play(guild_id, e))
-
-            # Kick off background prefetch for the track after this one
-            asyncio.ensure_future(self._prefetch_next(state))
         except Exception as e:
             print(f"[Music] ERROR starting playback: {e}")
+            state.kill_ytdlp()
 
     def _now_playing_embed(self, track, title="Now Playing"):
-        embed = discord.Embed(title=title, description=f"[{track.title}]({track.url})", color=EMBED_COLOR)
+        link = track.url or track.source_url or ""
+        embed = discord.Embed(title=title, description=f"[{track.title}]({link})", color=EMBED_COLOR)
         embed.add_field(name="Duration", value=track.duration_str)
         embed.add_field(name="Requested by", value=track.requester.mention)
         if track.thumbnail:
@@ -349,9 +356,11 @@ class Music(commands.Cog):
 
         embed = discord.Embed(title="Music Queue", color=EMBED_COLOR)
         if state.current:
+            cur = state.current
+            cur_link = cur.url or cur.source_url or ""
             embed.add_field(
                 name="Now Playing",
-                value=f"[{state.current.title}]({state.current.url}) `{state.current.duration_str}` — {state.current.requester.mention}",
+                value=f"[{cur.title}]({cur_link}) `{cur.duration_str}` — {cur.requester.mention}",
                 inline=False,
             )
 
@@ -359,7 +368,8 @@ class Music(commands.Cog):
         if queue_list:
             lines = []
             for i, t in enumerate(queue_list, 1):
-                lines.append(f"`{i}.` [{t.title}]({t.url}) `{t.duration_str}` — {t.requester.mention}")
+                t_link = t.url or t.source_url or ""
+                lines.append(f"`{i}.` [{t.title}]({t_link}) `{t.duration_str}` — {t.requester.mention}")
             embed.add_field(name="Up Next", value="\n".join(lines), inline=False)
 
         embed.set_footer(text=f"{len(state.queue)} track(s) in queue | Loop: {'On' if state.loop else 'Off'}")
@@ -378,6 +388,7 @@ class Music(commands.Cog):
         state.queue.clear()
         state.loop = False
         state.current = None
+        state.kill_ytdlp()
         if state.voice_client and (state.is_playing() or state.is_paused()):
             state.voice_client.stop()
         await ctx.send("Stopped playback and cleared the queue.")
@@ -387,6 +398,7 @@ class Music(commands.Cog):
         state = self._get_state(ctx.guild.id)
         state.queue.clear()
         state.current = None
+        state.kill_ytdlp()
         if state.voice_client:
             await state.voice_client.disconnect()
             state.voice_client = None
