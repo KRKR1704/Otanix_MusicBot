@@ -79,15 +79,16 @@ class Music(commands.Cog):
 
     async def _fetch_yt(self, query):
         ydl_opts = {
-            # Prefer direct progressive/DASH audio streams over fragile HLS (m3u8) streams,
-            # which require segment-by-segment requests that frequently 403 from cloud IPs.
-            "format": "bestaudio[protocol!=m3u8][protocol!=m3u8_native]/bestaudio*/bestaudio/best",
+            # Prefer m4a (ios client itag=140) — direct CDN URL, no IP lock, no HLS segments.
+            # Fall through to other non-HLS audio, then best overall if nothing else found.
+            "format": "bestaudio[ext=m4a]/bestaudio[protocol!=m3u8][protocol!=m3u8_native]/bestaudio/best",
             "noplaylist": True,
             "quiet": True,
             "remote_components": ["ejs:github"],
-            # Prefer web (uses cookies) then android — android CDN URLs work from cloud IPs
-            # without the IP restrictions that TV/mweb client URLs carry.
-            "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
+            # ios client: works with cookies, gives direct m4a streams (itag=140),
+            # CDN URLs are not IP-locked unlike web client URLs.
+            # android is skipped by yt-dlp when cookies are present, so omit it.
+            "extractor_args": {"youtube": {"player_client": ["ios", "web"]}},
         }
         if os.path.exists(COOKIES_FILE):
             ydl_opts["cookiefile"] = COOKIES_FILE
