@@ -85,6 +85,9 @@ class Music(commands.Cog):
             "noplaylist": True,
             "quiet": True,
             "remote_components": ["ejs:github"],
+            # Prefer web (uses cookies) then android — android CDN URLs work from cloud IPs
+            # without the IP restrictions that TV/mweb client URLs carry.
+            "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         }
         if os.path.exists(COOKIES_FILE):
             ydl_opts["cookiefile"] = COOKIES_FILE
