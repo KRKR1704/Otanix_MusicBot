@@ -157,6 +157,23 @@ class Music(commands.Cog):
         coro = self._advance(guild_id, state)
         asyncio.run_coroutine_threadsafe(coro, self.bot.loop)
 
+    async def _prefetch_next(self, state):
+        """Resolve the next lazy track's stream URL in the background while current track plays."""
+        if not state.queue:
+            return
+        next_track = state.queue[0]
+        if next_track.url is not None or not next_track.source_url:
+            return
+        try:
+            info = await self._fetch_yt(next_track.source_url)
+            next_track.url = info["url"]
+            next_track.headers = info.get("resolved_headers", {})
+            if not next_track.duration:
+                next_track.duration = info.get("duration", 0)
+            print(f"[Music] Prefetched: {next_track.title}")
+        except Exception as e:
+            print(f"[Music] Prefetch failed for '{next_track.title}': {e}")
+
     async def _advance(self, guild_id, state):
         if not state.queue:
             state.current = None
@@ -168,7 +185,7 @@ class Music(commands.Cog):
             state.current = None
             return
 
-        # Resolve lazy playlist track — stream URL fetched just before playback
+        # Resolve lazy playlist track — may already be done by prefetch
         if track.url is None and track.source_url:
             try:
                 info = await self._fetch_yt(track.source_url)
@@ -197,6 +214,9 @@ class Music(commands.Cog):
                 volume=0.5,
             )
             vc.play(source, after=lambda e: self._after_play(guild_id, e))
+
+            # Kick off background prefetch for the track after this one
+            asyncio.ensure_future(self._prefetch_next(state))
         except Exception as e:
             print(f"[Music] ERROR starting playback: {e}")
 
@@ -276,21 +296,23 @@ class Music(commands.Cog):
                 await self._advance(ctx.guild.id, state)
             return
 
+        searching_msg = await ctx.send(f"Searching for `{query}`...")
         try:
             async with ctx.typing():
                 track = await self._build_track(query, ctx.author)
         except Exception as e:
-            return await ctx.send(f"Could not find or load track: `{e}`")
+            await searching_msg.edit(content=f"Could not find or load track: `{e}`")
+            return
 
         if state.is_playing() or state.is_paused():
             state.queue.append(track)
             embed = self._now_playing_embed(track, title="Added to Queue")
             embed.set_footer(text=f"Position in queue: {len(state.queue)}")
-            await ctx.send(embed=embed)
+            await searching_msg.edit(content=None, embed=embed)
         else:
             state.queue.append(track)
             await self._advance(ctx.guild.id, state)
-            await ctx.send(embed=self._now_playing_embed(track))
+            await searching_msg.edit(content=None, embed=self._now_playing_embed(track))
 
     @commands.command(name="pause")
     async def pause(self, ctx):
